@@ -40,12 +40,35 @@ function deviceDigest(deviceId) {
   return crypto.createHash("sha256").update(String(deviceId)).digest("hex");
 }
 
+function revokeLicenseSessions(licenseKey) {
+  for (const [token, session] of sessions) {
+    if (session.licenseKey === licenseKey) sessions.delete(token);
+  }
+}
+
+function generationStatus() {
+  const requiredCoreFiles = [
+    CORE_SKILL_10S,
+    CORE_SKILL_15S,
+    path.join(__dirname, "core", "fixed-10s.md"),
+    path.join(__dirname, "core", "fixed-15s.md"),
+  ];
+  const missing = [];
+  if (!MODEL_API_URL) missing.push("未配置 MODEL_API_URL");
+  if (!MODEL_API_KEY) missing.push("未配置 MODEL_API_KEY");
+  if (requiredCoreFiles.some((file) => !fs.existsSync(file))) missing.push("核心 Skill 文件不完整");
+  return { ready: missing.length === 0, message: missing.join("；") || "生成服务正常" };
+}
+
 function licenseForToken(token) {
   const session = sessions.get(token);
   if (!session || session.pluginId !== PLUGIN_ID) return null;
   const licenses = readLicenses();
   const license = licenses.find((item) => item.licenseKey === session.licenseKey);
-  if (!license || license.status !== "ACTIVE" || Date.parse(license.expiresAt) <= Date.now()) {
+  if (!license
+    || license.status !== "ACTIVE"
+    || Date.parse(license.expiresAt) <= Date.now()
+    || license.deviceId !== session.deviceId) {
     sessions.delete(token);
     return null;
   }
@@ -166,10 +189,14 @@ async function handleMcp(req, res) {
       return mcpResponse(res, id, mcpResult("授权码已绑定其他设备，请联系管理员更换授权码。", true));
     }
     const token = crypto.randomBytes(32).toString("hex");
-    sessions.set(token, { licenseKey: license.licenseKey, pluginId: PLUGIN_ID });
-    if (!license.activatedAt) {
+    sessions.set(token, {
+      licenseKey: license.licenseKey,
+      pluginId: PLUGIN_ID,
+      deviceId: currentDevice,
+    });
+    if (!license.deviceId) {
       license.deviceId = currentDevice;
-      license.activatedAt = new Date().toISOString();
+      license.activatedAt = license.activatedAt || new Date().toISOString();
       writeLicenses(licenses);
     }
     return mcpResponse(res, id, mcpResult(JSON.stringify({
@@ -241,7 +268,7 @@ function page(res) {
     .active { color: #16803c; }
     .revoked { color: #b42318; }
     .expired { color: #a15c00; }
-    .actions { display: flex; gap: 6px; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .actions button { width: auto; padding: 7px 10px; }
     #login { max-width: 420px; margin: 15vh auto; }
     #app { display: none; }
@@ -262,8 +289,12 @@ function page(res) {
 <div id="app">
   <header>
     <h1>曾美团队授权管理</h1>
-    <p class="hint">可创建授权码、查看用户状态，并停止或恢复使用。</p>
+    <p class="hint">可创建授权码、绑定设备、解绑换机，并停止或恢复使用。</p>
   </header>
+  <section>
+    <h2>生成服务</h2>
+    <p id="serviceStatus" class="hint">正在检查生成服务状态...</p>
+  </section>
   <section>
     <h2>生成授权码</h2>
     <form id="createForm" class="form-grid">
@@ -278,7 +309,7 @@ function page(res) {
   <section>
     <h2>授权用户</h2>
     <div class="table-wrap">
-      <table><thead><tr><th>用户</th><th>联系方式</th><th>激活码</th><th>创建时间</th><th>激活时间</th><th>到期时间</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table>
+      <table><thead><tr><th>用户</th><th>联系方式</th><th>激活码</th><th>设备</th><th>创建时间</th><th>激活时间</th><th>到期时间</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table>
     </div>
   </section>
 </main>
@@ -297,12 +328,19 @@ function date(value) { return value ? new Date(value).toLocaleString() : "-"; }
 async function loadRows() {
   const data = await api("/admin/api/licenses");
   if (!data.ok) { alert(data.error || "读取失败"); return; }
+  const service = await api("/admin/api/service-status");
+  const serviceStatus = document.getElementById("serviceStatus");
+  serviceStatus.textContent = service.ready ? "生成服务：正常" : "生成服务：未就绪（" + (service.message || "请检查配置") + "）";
+  serviceStatus.className = service.ready ? "hint active" : "hint revoked";
   document.getElementById("rows").innerHTML = data.licenses.map((item) => {
     const stopped = item.status === "REVOKED";
     const expired = !stopped && Date.parse(item.expiresAt) <= Date.now();
     const status = stopped ? "已停止" : expired ? "已过期" : "正常";
     const cls = stopped ? "revoked" : expired ? "expired" : "active";
-    return "<tr><td>" + esc(item.userName) + "</td><td>" + esc(item.userContact) + "</td><td><code>" + esc(item.licenseKey) + "</code></td><td>" + date(item.createdAt) + "</td><td>" + date(item.activatedAt) + "</td><td>" + date(item.expiresAt) + "</td><td class='status " + cls + "'>" + status + "</td><td class='actions'><button class='" + (stopped ? "secondary" : "danger") + "' data-key='" + esc(item.licenseKey) + "' data-status='" + (stopped ? "ACTIVE" : "REVOKED") + "'>" + (stopped ? "恢复使用" : "停止使用") + "</button></td></tr>";
+    const device = item.deviceBound ? "已绑定" : "未绑定";
+    const controls = "<button class='" + (stopped ? "secondary" : "danger") + "' data-action='status' data-key='" + esc(item.licenseKey) + "' data-status='" + (stopped ? "ACTIVE" : "REVOKED") + "'>" + (stopped ? "恢复使用" : "停止使用") + "</button>"
+      + (item.deviceBound ? "<button class='secondary' data-action='unbind' data-key='" + esc(item.licenseKey) + "'>解绑设备</button>" : "");
+    return "<tr><td>" + esc(item.userName) + "</td><td>" + esc(item.userContact) + "</td><td><code>" + esc(item.licenseKey) + "</code></td><td>" + device + "</td><td>" + date(item.createdAt) + "</td><td>" + date(item.activatedAt) + "</td><td>" + date(item.expiresAt) + "</td><td class='status " + cls + "'>" + status + "</td><td class='actions'>" + controls + "</td></tr>";
   }).join("");
 }
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
@@ -326,7 +364,14 @@ document.getElementById("createForm").addEventListener("submit", async (event) =
 document.getElementById("rows").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-key]");
   if (!button) return;
-  const data = await api("/admin/api/licenses/status", { method: "POST", body: JSON.stringify({ licenseKey: button.dataset.key, status: button.dataset.status }) });
+  const unbinding = button.dataset.action === "unbind";
+  if (unbinding && !confirm("解绑后旧电脑会立刻无法继续使用。确认允许新电脑重新绑定吗？")) return;
+  const data = await api(unbinding ? "/admin/api/licenses/unbind" : "/admin/api/licenses/status", {
+    method: "POST",
+    body: JSON.stringify(unbinding
+      ? { licenseKey: button.dataset.key }
+      : { licenseKey: button.dataset.key, status: button.dataset.status })
+  });
   if (!data.ok) { alert(data.error || "操作失败"); return; }
   loadRows();
 });
@@ -379,7 +424,7 @@ const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
   if (req.method === "GET" && requestUrl.pathname === "/health") {
-    return json(res, 200, { ok: true, service: PLUGIN_ID });
+    return json(res, 200, { ok: true, service: PLUGIN_ID, generation: generationStatus().ready });
   }
 
   if (req.method === "GET" && requestUrl.pathname === "/admin") {
@@ -420,7 +465,18 @@ const server = http.createServer(async (req, res) => {
     if (!adminAuthorized(req)) {
       return json(res, 401, { ok: false, error: "管理员密码错误" });
     }
-    return json(res, 200, { ok: true, licenses: readLicenses() });
+    const licenses = readLicenses().map(({ deviceId, ...license }) => ({
+      ...license,
+      deviceBound: Boolean(deviceId),
+    }));
+    return json(res, 200, { ok: true, licenses });
+  }
+
+  if (req.method === "GET" && requestUrl.pathname === "/admin/api/service-status") {
+    if (!adminAuthorized(req)) {
+      return json(res, 401, { ok: false, error: "管理员密码错误" });
+    }
+    return json(res, 200, { ok: true, ...generationStatus() });
   }
 
   if (req.method === "POST" && requestUrl.pathname === "/admin/api/licenses/status") {
@@ -438,6 +494,28 @@ const server = http.createServer(async (req, res) => {
         return json(res, 404, { ok: false, error: "授权码不存在" });
       }
       license.status = input.status;
+      if (input.status === "REVOKED") revokeLicenseSessions(license.licenseKey);
+      writeLicenses(licenses);
+      return json(res, 200, { ok: true });
+    } catch {
+      return json(res, 400, { ok: false, error: "请求格式错误" });
+    }
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/admin/api/licenses/unbind") {
+    try {
+      const input = await bodyOf(req);
+      if (!adminAuthorized(req, input)) {
+        return json(res, 401, { ok: false, error: "管理员密码错误" });
+      }
+      const licenses = readLicenses();
+      const license = licenses.find((item) => item.licenseKey === input.licenseKey);
+      if (!license) {
+        return json(res, 404, { ok: false, error: "授权码不存在" });
+      }
+      license.deviceId = null;
+      license.activatedAt = null;
+      revokeLicenseSessions(license.licenseKey);
       writeLicenses(licenses);
       return json(res, 200, { ok: true });
     } catch {
@@ -471,7 +549,11 @@ const server = http.createServer(async (req, res) => {
         return json(res, 403, { ok: false, error: "授权码已绑定其他设备" });
       }
       const accessToken = crypto.randomBytes(32).toString("hex");
-      sessions.set(accessToken, { licenseKey: license.licenseKey, pluginId: PLUGIN_ID });
+      sessions.set(accessToken, {
+        licenseKey: license.licenseKey,
+        pluginId: PLUGIN_ID,
+        deviceId: currentDevice,
+      });
       return json(res, 200, {
         ok: true,
         licenseId: license.licenseKey,
