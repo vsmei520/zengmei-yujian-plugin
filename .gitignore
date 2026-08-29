@@ -5,6 +5,11 @@
 server/data/
 server/.env
 server/config.local.json
+server/core/*.md
+!server/core/README.md
+package-server/
+package-server-verify/
+*.zip
 
 # Local tooling and caches.
 node_modules/

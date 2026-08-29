@@ -56,8 +56,10 @@ function bearerLicense(req) {
 
 function readCoreSkill(profile) {
   const file = profile === "10s" ? CORE_SKILL_10S : CORE_SKILL_15S;
+  const fixedPrompt = path.join(__dirname, "core", `fixed-${profile}.md`);
   if (!fs.existsSync(file)) throw new Error(`核心规则文件不存在: ${file}`);
-  return fs.readFileSync(file, "utf8");
+  if (!fs.existsSync(fixedPrompt)) throw new Error(`固定执行指令不存在: ${fixedPrompt}`);
+  return `${fs.readFileSync(file, "utf8")}\n\n${fs.readFileSync(fixedPrompt, "utf8")}`;
 }
 
 async function remoteGenerate(profile, input) {
