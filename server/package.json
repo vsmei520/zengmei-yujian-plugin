@@ -1,0 +1,21 @@
+{
+  "name": "zengmei-yujian-service",
+  "version": "1.2.0",
+  "description": "曾美团队·育见大片的 OAuth 授权远程 MCP 服务。",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "曾美团队",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "@alicloud/dysmsapi20170525": "^4.6.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "zod": "^3.24.4"
+  }
+}
