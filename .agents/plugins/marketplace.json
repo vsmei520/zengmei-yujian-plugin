@@ -1,0 +1,20 @@
+{
+  "name": "zengmei-team",
+  "interface": {
+    "displayName": "曾美团队插件市场"
+  },
+  "plugins": [
+    {
+      "name": "zengmei-team-yujian-dapian-skill",
+      "source": {
+        "source": "local",
+        "path": "./plugins/zengmei-team-yujian-dapian-skill"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

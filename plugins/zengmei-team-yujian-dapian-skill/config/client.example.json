@@ -1,0 +1,11 @@
+{
+  "pluginId": "zengmei-team-yujian-dapian-skill",
+  "apiBaseUrl": "https://api.example.com",
+  "clientVersion": "1.0.0",
+  "profiles": [
+    "10s",
+    "15s"
+  ],
+  "corePolicy": "server-only",
+  "localPlaintextCore": false
+}

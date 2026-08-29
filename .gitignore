@@ -1,0 +1,13 @@
+# Never publish the original Skill source to the distribution repository.
+曾美团队·育见大片_爆款电影化重构Skill_*.md
+
+# Never publish license records or local secrets.
+server/data/
+server/.env
+server/config.local.json
+
+# Local tooling and caches.
+node_modules/
+cache/
+*.log
+.DS_Store

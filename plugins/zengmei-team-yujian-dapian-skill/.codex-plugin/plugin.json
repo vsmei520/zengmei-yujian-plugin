@@ -1,0 +1,18 @@
+{
+  "name": "zengmei-team-yujian-dapian-skill",
+  "version": "1.0.0",
+  "description": "曾美团队·育见大片远程强保护插件",
+  "author": {
+    "name": "曾美团队"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "曾美团队·育见大片",
+    "shortDescription": "远程授权的育儿内容电影化重构工具。",
+    "longDescription": "曾美团队·育见大片通过远程服务完成规则执行，本地插件不包含核心 Skill 明文。",
+    "developerName": "曾美团队",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "使用曾美团队·育见大片处理这个视频内容。"
+  }
+}
