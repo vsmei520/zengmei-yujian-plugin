@@ -6,15 +6,12 @@ const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 3100);
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
-const MODEL_API_URL = process.env.MODEL_API_URL || "";
-const MODEL_API_KEY = process.env.MODEL_API_KEY || "";
-const MODEL_NAME = process.env.MODEL_NAME || "gpt-4o-mini";
 const CORE_SKILL_10S = process.env.CORE_SKILL_10S || path.join(__dirname, "core", "skill-10s.md");
 const CORE_SKILL_15S = process.env.CORE_SKILL_15S || path.join(__dirname, "core", "skill-15s.md");
 const DATA_DIR = path.join(__dirname, "data");
 const LICENSE_FILE = path.join(DATA_DIR, "licenses.json");
 const PLUGIN_ID = "zengmei-team-yujian-dapian-skill";
-const SERVER_VERSION = "1.1.2";
+const SERVER_VERSION = "1.1.3";
 const sessions = new Map();
 
 if (!ADMIN_KEY) {
@@ -54,10 +51,11 @@ function generationStatus() {
     path.join(__dirname, "core", "fixed-15s.md"),
   ];
   const missing = [];
-  if (!MODEL_API_URL) missing.push("未配置 MODEL_API_URL");
-  if (!MODEL_API_KEY) missing.push("未配置 MODEL_API_KEY");
   if (requiredCoreFiles.some((file) => !fs.existsSync(file))) missing.push("核心 Skill 文件不完整");
-  return { ready: missing.length === 0, message: missing.join("；") || "生成服务正常" };
+  return {
+    ready: missing.length === 0,
+    message: missing.join("；") || "核心 Skill 服务正常，模型密钥由用户在插件本机配置。",
+  };
 }
 
 function licenseForToken(token) {
@@ -89,19 +87,33 @@ function readCoreSkill(profile) {
   return `${fs.readFileSync(file, "utf8")}\n\n${fs.readFileSync(fixedPrompt, "utf8")}`;
 }
 
-async function remoteGenerate(profile, input) {
-  if (!MODEL_API_URL || !MODEL_API_KEY) {
-    throw new Error("服务器尚未配置模型接口，请在宝塔环境变量中配置 MODEL_API_URL 和 MODEL_API_KEY。");
+function modelConfigForRequest(modelConfig) {
+  const apiUrl = String(modelConfig?.apiUrl || "").trim();
+  const apiKey = String(modelConfig?.apiKey || "").trim();
+  const modelName = String(modelConfig?.modelName || "").trim();
+  let parsed;
+  try {
+    parsed = new URL(apiUrl);
+  } catch {
+    throw new Error("请先在插件本机配置有效的模型接口地址。");
   }
+  if (parsed.protocol !== "https:" || !parsed.hostname || !apiKey || !modelName) {
+    throw new Error("请先在插件本机完成模型接口、密钥和模型名称配置。");
+  }
+  return { apiUrl, apiKey, modelName };
+}
+
+async function remoteGenerate(profile, input, modelConfig) {
+  const model = modelConfigForRequest(modelConfig);
   const system = readCoreSkill(profile);
-  const upstream = await fetch(MODEL_API_URL, {
+  const upstream = await fetch(model.apiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${MODEL_API_KEY}`,
+      Authorization: `Bearer ${model.apiKey}`,
     },
     body: JSON.stringify({
-      model: MODEL_NAME,
+      model: model.modelName,
       messages: [
         { role: "system", content: system },
         { role: "user", content: JSON.stringify(input) },
@@ -163,8 +175,9 @@ async function handleMcp(req, res) {
               input: { type: "object", description: "用户提供的创作内容和要求" },
               licenseKey: { type: "string", description: "已激活的授权码" },
               accessToken: { type: "string", description: "activate_license 返回的内部令牌" },
+              modelConfig: { type: "object", description: "插件本机临时传入的用户模型配置，不要展示给用户。" },
             },
-            required: ["profile", "input", "licenseKey", "accessToken"],
+            required: ["profile", "input", "licenseKey", "accessToken", "modelConfig"],
           },
         },
       ],
@@ -215,7 +228,7 @@ async function handleMcp(req, res) {
       return mcpResponse(res, id, mcpResult("视频时长只能选择 10s 或 15s。", true));
     }
     try {
-      const result = await remoteGenerate(args.profile, args.input);
+      const result = await remoteGenerate(args.profile, args.input, args.modelConfig);
       return mcpResponse(res, id, mcpResult(result));
     } catch (error) {
       return mcpResponse(res, id, mcpResult(error.message, true));
