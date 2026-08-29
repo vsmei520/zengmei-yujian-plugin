@@ -4,6 +4,17 @@
 
 用户在 Codex 授权网页中填写手机号和授权码，不需要填写模型地址、模型名称或 API 密钥。生成使用用户自己的 Codex 账号模型，服务端不会调用第三方模型接口。
 
+## 工作流入口
+
+服务端同时提供两套入口，使用同一套授权和一机一码绑定：
+
+- `get_yujian_10s_workflow`：10 秒原片视频版
+- `get_yujian_15s_workflow`：15 秒原片视频版
+- `get_yujian_10s_transcript_workflow`：10 秒台词文案版
+- `get_yujian_15s_transcript_workflow`：15 秒台词文案版
+
+台词文案版只分析用户提供的台词文本，不要求用户上传原片视频。
+
 ## 宝塔设置
 
 项目目录：
