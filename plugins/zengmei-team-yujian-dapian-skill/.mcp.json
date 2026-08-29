@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zengmei-yujian": {
+      "type": "http",
+      "url": "https://yuer.073955.com/mcp"
+    }
+  }
+}

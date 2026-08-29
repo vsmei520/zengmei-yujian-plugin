@@ -6,9 +6,16 @@ const { URL } = require("url");
 
 const PORT = Number(process.env.PORT || 3100);
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+const MODEL_API_URL = process.env.MODEL_API_URL || "";
+const MODEL_API_KEY = process.env.MODEL_API_KEY || "";
+const MODEL_NAME = process.env.MODEL_NAME || "gpt-4o-mini";
+const CORE_SKILL_10S = process.env.CORE_SKILL_10S || path.join(__dirname, "core", "skill-10s.md");
+const CORE_SKILL_15S = process.env.CORE_SKILL_15S || path.join(__dirname, "core", "skill-15s.md");
 const DATA_DIR = path.join(__dirname, "data");
 const LICENSE_FILE = path.join(DATA_DIR, "licenses.json");
 const PLUGIN_ID = "zengmei-team-yujian-dapian-skill";
+const SERVER_VERSION = "1.1.0";
+const sessions = new Map();
 
 if (!ADMIN_KEY) {
   throw new Error("ADMIN_KEY is required.");
@@ -27,6 +34,153 @@ function writeLicenses(licenses) {
   const tempFile = `${LICENSE_FILE}.tmp`;
   fs.writeFileSync(tempFile, JSON.stringify(licenses, null, 2), "utf8");
   fs.renameSync(tempFile, LICENSE_FILE);
+}
+
+function licenseForToken(token) {
+  const session = sessions.get(token);
+  if (!session || session.pluginId !== PLUGIN_ID) return null;
+  const licenses = readLicenses();
+  const license = licenses.find((item) => item.licenseKey === session.licenseKey);
+  if (!license || license.status !== "ACTIVE" || Date.parse(license.expiresAt) <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return license;
+}
+
+function bearerLicense(req) {
+  const value = String(req.headers.authorization || "");
+  if (!value.startsWith("Bearer ")) return null;
+  return licenseForToken(value.slice(7).trim());
+}
+
+function readCoreSkill(profile) {
+  const file = profile === "10s" ? CORE_SKILL_10S : CORE_SKILL_15S;
+  if (!fs.existsSync(file)) throw new Error(`核心规则文件不存在: ${file}`);
+  return fs.readFileSync(file, "utf8");
+}
+
+async function remoteGenerate(profile, input) {
+  if (!MODEL_API_URL || !MODEL_API_KEY) {
+    throw new Error("服务器尚未配置模型接口，请在宝塔环境变量中配置 MODEL_API_URL 和 MODEL_API_KEY。");
+  }
+  const system = readCoreSkill(profile);
+  const upstream = await fetch(MODEL_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${MODEL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: JSON.stringify(input) },
+      ],
+      temperature: 0.7,
+    }),
+  });
+  const payload = await upstream.json();
+  if (!upstream.ok) throw new Error(payload.error?.message || "模型接口请求失败");
+  const result = payload.choices?.[0]?.message?.content;
+  if (!result) throw new Error("模型接口没有返回生成结果");
+  return result;
+}
+
+function mcpResult(text, isError = false) {
+  return { content: [{ type: "text", text }], isError };
+}
+
+function mcpResponse(res, id, result, error) {
+  return json(res, 200, error ? { jsonrpc: "2.0", id, error } : { jsonrpc: "2.0", id, result });
+}
+
+async function handleMcp(req, res) {
+  let input;
+  try {
+    input = await bodyOf(req);
+  } catch {
+    return json(res, 400, { error: "invalid json" });
+  }
+  const id = input.id ?? null;
+  const method = input.method;
+  if (method === "initialize") {
+    return mcpResponse(res, id, {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "zengmei-yujian", version: SERVER_VERSION },
+    });
+  }
+  if (method === "notifications/initialized") return res.writeHead(202).end();
+  if (method === "tools/list") {
+    return mcpResponse(res, id, {
+      tools: [
+        {
+          name: "activate_license",
+          description: "激活曾美团队授权码。首次使用必须调用。",
+          inputSchema: {
+            type: "object",
+            properties: { licenseKey: { type: "string", description: "授权码" } },
+            required: ["licenseKey"],
+          },
+        },
+        {
+          name: "generate_content",
+          description: "使用曾美团队远程核心规则生成育儿视频内容。accessToken 只作为内部参数使用，不要展示给用户。",
+          inputSchema: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["10s", "15s"] },
+              input: { type: "object", description: "用户提供的创作内容和要求" },
+              licenseKey: { type: "string", description: "已激活的授权码" },
+              accessToken: { type: "string", description: "activate_license 返回的内部令牌" },
+            },
+            required: ["profile", "input", "licenseKey", "accessToken"],
+          },
+        },
+      ],
+    });
+  }
+  if (method !== "tools/call") {
+    return mcpResponse(res, id, null, { code: -32601, message: "Method not found" });
+  }
+  const name = input.params?.name;
+  const args = input.params?.arguments || {};
+  if (name === "activate_license") {
+    const licenses = readLicenses();
+    const license = licenses.find((item) => item.licenseKey === args.licenseKey);
+    if (!license || license.status !== "ACTIVE" || Date.parse(license.expiresAt) <= Date.now()) {
+      return mcpResponse(res, id, mcpResult("授权码无效或已过期。", true));
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    sessions.set(token, { licenseKey: license.licenseKey, pluginId: PLUGIN_ID });
+    if (!license.activatedAt) {
+      license.activatedAt = new Date().toISOString();
+      writeLicenses(licenses);
+    }
+    return mcpResponse(res, id, mcpResult(JSON.stringify({
+      message: "授权成功",
+      expiresAt: license.expiresAt,
+      licenseKey: license.licenseKey,
+      accessToken: token,
+    })));
+  }
+  if (name === "generate_content") {
+    const license = licenseForToken(args.accessToken);
+    if (!license || args.licenseKey !== license.licenseKey) {
+      return mcpResponse(res, id, mcpResult("请先使用有效授权码完成激活。", true));
+    }
+    if (!["10s", "15s"].includes(args.profile)) {
+      return mcpResponse(res, id, mcpResult("视频时长只能选择 10s 或 15s。", true));
+    }
+    try {
+      const result = await remoteGenerate(args.profile, args.input);
+      return mcpResponse(res, id, mcpResult(result));
+    } catch (error) {
+      return mcpResponse(res, id, mcpResult(error.message, true));
+    }
+  }
+  return mcpResponse(res, id, mcpResult("工具不存在。", true));
 }
 
 function json(res, status, body) {
@@ -299,12 +453,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 403, { ok: false, error: "授权码已绑定其他设备" });
       }
       const accessToken = crypto.randomBytes(32).toString("hex");
+      sessions.set(accessToken, { licenseKey: license.licenseKey, pluginId: PLUGIN_ID });
       return json(res, 200, {
         ok: true,
         licenseId: license.licenseKey,
         accessToken,
         expiresAt: license.expiresAt,
-        packageVersion: "1.0.0",
+        packageVersion: SERVER_VERSION,
       });
     } catch {
       return json(res, 400, { ok: false, error: "请求格式错误" });
@@ -314,11 +469,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && requestUrl.pathname === "/v1/plugin/manifest") {
     return json(res, 200, {
       pluginId: PLUGIN_ID,
-      latestVersion: "1.0.0",
-      minimumClientVersion: "1.0.0",
+      latestVersion: SERVER_VERSION,
+      minimumClientVersion: SERVER_VERSION,
       releaseChannel: "stable",
       forceUpdate: false,
     });
+  }
+
+  if (req.method === "POST" && requestUrl.pathname === "/mcp") {
+    return handleMcp(req, res);
   }
 
   return json(res, 404, { ok: false, error: "not found" });

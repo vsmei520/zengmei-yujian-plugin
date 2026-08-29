@@ -15,9 +15,21 @@
 ```text
 PORT=3100
 ADMIN_KEY=请替换成你自己的管理员密码
+MODEL_API_URL=https://你的模型服务/v1/chat/completions
+MODEL_API_KEY=你的模型密钥
+MODEL_NAME=你的模型名称
 ```
 
 不要把 `ADMIN_KEY` 写进网页文件或提交到公开仓库。
+
+另外，把两份核心 Skill 文件放到：
+
+```text
+/www/wwwroot/yuer.073955.com/server/core/skill-10s.md
+/www/wwwroot/yuer.073955.com/server/core/skill-15s.md
+```
+
+这两份文件不上传 GitHub。
 
 ## 3. 启动
 
@@ -41,6 +53,13 @@ node server.js
 
 ```text
 目标 URL：http://127.0.0.1:3100
+```
+
+反向代理后要确认以下地址能打开：
+
+```text
+https://yuer.073955.com/health
+https://yuer.073955.com/admin
 ```
 
 然后访问：
@@ -82,3 +101,15 @@ server/data/licenses.json
 3. 用户刷新或重新安装插件
 
 授权后台地址保持不变，不需要重新生成授权码。
+
+## 7. 用户安装和使用
+
+用户在 Codex 的插件市场中添加你的 GitHub 仓库并安装插件，不需要运行 PowerShell。
+
+安装后，用户直接说：
+
+```text
+使用曾美团队·育见大片，生成 10 秒版本
+```
+
+第一次使用时，插件会让用户输入授权码。之后按要求提供视频主题、人物、场景等内容即可。
