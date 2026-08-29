@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "zengmei-yujian": {
-      "type": "http",
-      "url": "https://yuer.073955.com/mcp"
+      "type": "stdio",
+      "command": "node",
+      "args": ["./mcp-proxy.js"],
+      "env": {
+        "ZENGMEI_MCP_URL": "https://yuer.073955.com/mcp"
+      }
     }
   }
 }

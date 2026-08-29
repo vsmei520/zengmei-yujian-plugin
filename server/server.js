@@ -14,7 +14,7 @@ const CORE_SKILL_15S = process.env.CORE_SKILL_15S || path.join(__dirname, "core"
 const DATA_DIR = path.join(__dirname, "data");
 const LICENSE_FILE = path.join(DATA_DIR, "licenses.json");
 const PLUGIN_ID = "zengmei-team-yujian-dapian-skill";
-const SERVER_VERSION = "1.1.0";
+const SERVER_VERSION = "1.1.2";
 const sessions = new Map();
 
 if (!ADMIN_KEY) {
@@ -34,6 +34,10 @@ function writeLicenses(licenses) {
   const tempFile = `${LICENSE_FILE}.tmp`;
   fs.writeFileSync(tempFile, JSON.stringify(licenses, null, 2), "utf8");
   fs.renameSync(tempFile, LICENSE_FILE);
+}
+
+function deviceDigest(deviceId) {
+  return crypto.createHash("sha256").update(String(deviceId)).digest("hex");
 }
 
 function licenseForToken(token) {
@@ -154,9 +158,17 @@ async function handleMcp(req, res) {
     if (!license || license.status !== "ACTIVE" || Date.parse(license.expiresAt) <= Date.now()) {
       return mcpResponse(res, id, mcpResult("授权码无效或已过期。", true));
     }
+    if (!String(args.deviceId || "").trim()) {
+      return mcpResponse(res, id, mcpResult("无法读取本机插件标识，请重新安装插件后再试。", true));
+    }
+    const currentDevice = deviceDigest(args.deviceId);
+    if (license.deviceId && license.deviceId !== currentDevice) {
+      return mcpResponse(res, id, mcpResult("授权码已绑定其他设备，请联系管理员更换授权码。", true));
+    }
     const token = crypto.randomBytes(32).toString("hex");
     sessions.set(token, { licenseKey: license.licenseKey, pluginId: PLUGIN_ID });
     if (!license.activatedAt) {
+      license.deviceId = currentDevice;
       license.activatedAt = new Date().toISOString();
       writeLicenses(licenses);
     }
@@ -447,11 +459,15 @@ const server = http.createServer(async (req, res) => {
       if (input.pluginId !== PLUGIN_ID) {
         return json(res, 400, { ok: false, error: "插件不匹配" });
       }
+      if (!String(input.deviceId || "").trim()) {
+        return json(res, 400, { ok: false, error: "缺少设备标识" });
+      }
+      const currentDevice = deviceDigest(input.deviceId);
       if (!license.deviceId) {
-        license.deviceId = input.deviceId || null;
+        license.deviceId = currentDevice;
         license.activatedAt = new Date().toISOString();
         writeLicenses(licenses);
-      } else if (license.deviceId !== input.deviceId) {
+      } else if (license.deviceId !== currentDevice) {
         return json(res, 403, { ok: false, error: "授权码已绑定其他设备" });
       }
       const accessToken = crypto.randomBytes(32).toString("hex");
